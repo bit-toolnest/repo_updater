@@ -1,0 +1,8 @@
+apply from: 'deps.gradle'
+
+deps.each { dep ->
+    def depPath = "${rootDir}/build/deps/${dep.repo}"
+    if (file(depPath).exists()) {
+        includeBuild(depPath)
+    }
+}

@@ -1,0 +1,26 @@
+# Ignore Gradle build output
+/build/
+*/build/
+
+# Ignore Gradle local cache
+.gradle/
+
+# Ignore OS-specific files
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Ignore IDE project files
+.idea/
+*.iml
+.vscode/
+*.class
+
+# Keep Gradle wrapper properties
+!gradle/wrapper/gradle-wrapper.properties
+
+# Keep wrapper scripts
+!gradlew
+!gradlew.bat

@@ -1,0 +1,145 @@
+apply from: 'deps.gradle'
+
+// -------------------- ENVIRONMENT --------------------
+task prepareEnv {
+    description = "Source set_env.sh to export environment variables"
+    group = "setup"
+
+    doLast {
+        def envScript = file("${rootProject.projectDir}/set_env.sh")
+        if (!envScript.exists()) {
+            throw new GradleException("set_env.sh not found at ${envScript}")
+        }
+        println "[INFO] Sourcing environment script: ${envScript}"
+        // Run once to ensure variables are exported in subshells
+        exec {
+            commandLine "bash", "-c", "source ${envScript.absolutePath}"
+        }
+    }
+}
+
+task installDeps {
+    doLast {
+        deps.each { dep ->
+            // Resolve depsDir: prefer parentDepsDir if passed
+            def depsDir = project.hasProperty('parentDepsDir') 
+                ? file(project.property('parentDepsDir')) 
+                : file("${rootProject.buildDir}/deps")
+
+            def depBase = "${depsDir}/${dep.repo}"
+            def depZip = "${depBase}.zip"
+            def branchOrTag = dep.version == "latest" ? "main" : dep.version
+
+            depsDir.mkdirs()
+
+            if (!file(depBase).exists()) {
+                println "Downloading dependency repo: ${dep.repo} from org ${org}"
+                exec {
+                    commandLine "curl", "-L",
+                        "https://github.com/${org}/${dep.repo}/archive/${branchOrTag}.zip",
+                        "-o", depZip
+                }
+
+                project.copy {
+                    from zipTree(depZip)
+                    into depsDir
+                }
+
+                def extracted = file("${depsDir}/${dep.repo}-${branchOrTag}")
+                if (extracted.exists()) {
+                    extracted.renameTo(file(depBase))
+                }
+            }
+
+            println "Installing dependency via Gradle: ${dep.repo}"
+            exec {
+                workingDir depBase
+                // Always propagate parentDepsDir down
+                commandLine "./gradlew", "install", "-PparentDepsDir=${depsDir}"
+            }
+        }
+    }
+}
+
+task install(dependsOn: installDeps) {
+    doLast {
+        println "Installing current tool..."
+        exec {
+            commandLine "bash", "src/install.sh"
+        }
+    }
+}
+
+// -------------------- UNINSTALL --------------------
+task uninstallCurrent {
+    doLast {
+        println "Uninstalling current tool..."
+        exec {
+            commandLine "bash", "src/uninstall.sh"
+        }
+    }
+}
+
+task uninstallDeps {
+    doLast {
+        println "Uninstalling dependencies..."
+        deps.each { dep ->
+            def depPath = "${buildDir}/deps/${dep.repo}"
+            if (file(depPath).exists()) {
+                println "Uninstalling dependency via Gradle: ${dep.repo}"
+                exec {
+                    workingDir depPath
+                    commandLine "./gradlew", "uninstall"
+                }
+            } else {
+                println "Dependency ${dep.repo} not found in ${depPath}, skipping..."
+            }
+        }
+    }
+}
+
+task uninstall(dependsOn: [uninstallCurrent, uninstallDeps]) {
+    doLast {
+        println "✅ Uninstall sequence complete"
+    }
+}
+
+// Task to completely delete the build folder (including .git dirs)
+task cleanBuildDir {
+    doLast {
+        def buildDirFile = file("${buildDir}")
+        if (buildDirFile.exists()) {
+            println "Deleting build directory: ${buildDirFile}"
+            // Use Gradle's built-in delete to recursively remove everything
+            delete buildDirFile
+        } else {
+            println "Build directory does not exist, nothing to delete."
+        }
+    }
+}
+
+// -------------------- TEST SANDBOX --------------------
+task testSandbox {
+    description = "Run installer tests inside Docker sandbox via test/test_suite.sh"
+    group = "verification"
+
+    doLast {
+        println "Running sandbox tests..."
+        def testScript = file("${rootProject.projectDir}/test/test_suite.sh")
+        def envScript = file("${rootProject.projectDir}/set_env.sh")
+
+        if (!testScript.exists()) {
+            throw new GradleException("test.sh not found at ${testScript}")
+        }
+        if (!envScript.exists()) {
+            throw new GradleException("set_env.sh not found at ${envScript}")
+        }
+
+        // Source set_env.sh and then run test.sh in one shell
+        exec {
+            commandLine "bash", "-c", "source ${envScript.absolutePath} && bash ${testScript.absolutePath}"
+        }
+    }
+}
+
+

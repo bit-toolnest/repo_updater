@@ -1,0 +1,8 @@
+ext.org = "bit-toolnest"   // your GitHub org
+
+//use real tool repo instead of toolA, toolB, toolC
+ext.deps = [
+    //[repo: "docker", version: "latest"]   // fixed tag
+    //[repo: "toolB", version: "main"],     // fixed branch
+    //[repo: "toolC", version: "latest"]    // always fetch most recent
+]

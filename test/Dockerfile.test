@@ -1,0 +1,16 @@
+# --- Build Docker image ---
+FROM ubuntu:22.04
+
+# Install basic tools needed for most installers
+RUN apt-get update && \
+    apt-get install -y sudo curl bash coreutils && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory inside container
+WORKDIR /root
+
+# Copy the entire src folder (from project root) into container
+COPY src /root/src
+
+# Default command keeps container alive for test.sh to exec scripts
+CMD ["tail", "-f", "/dev/null"]
