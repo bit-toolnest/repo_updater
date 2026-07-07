@@ -1,0 +1,23 @@
+{
+  "organization": "bit-toolnest",
+  "template_org": "bit-template",
+  "template_repo": "tool-template",
+  "sources": [
+    {
+      "src": "Jenkinsfile",
+      "dest": "Jenkinsfile",
+      "type": "file"
+    }/*,
+    {
+      "src": "ci-scripts",
+      "dest": "ci-scripts",
+      "type": "folder"
+    } */
+  ],
+  "exclude": [
+    "repo_updater",
+    "setup_wsl"
+  ],
+  "update_mode": "PR",        //PUSH
+  "pr_target": "main"
+}
