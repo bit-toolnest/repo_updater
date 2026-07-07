@@ -58,13 +58,6 @@ pipeline {
 
         stage('Template Version Sync') {
 
-            when {
-                allOf {
-                    expression { env.CHANGE_ID != null }
-                    expression { env.CHANGE_TARGET == 'main' }
-                }
-            }
-
             steps {
                 script {
 
