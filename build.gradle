@@ -1,23 +1,6 @@
 apply from: 'deps.gradle'
 
-// -------------------- ENVIRONMENT --------------------
-task prepareEnv {
-    description = "Source set_env.sh to export environment variables"
-    group = "setup"
-
-    doLast {
-        def envScript = file("${rootProject.projectDir}/set_env.sh")
-        if (!envScript.exists()) {
-            throw new GradleException("set_env.sh not found at ${envScript}")
-        }
-        println "[INFO] Sourcing environment script: ${envScript}"
-        // Run once to ensure variables are exported in subshells
-        exec {
-            commandLine "bash", "-c", "source ${envScript.absolutePath}"
-        }
-    }
-}
-
+// -------------------- INSTALL --------------------
 task installDeps {
     doLast {
         deps.each { dep ->
@@ -55,7 +38,7 @@ task installDeps {
             exec {
                 workingDir depBase
                 // Always propagate parentDepsDir down
-                commandLine "./gradlew", "install", "-PparentDepsDir=${depsDir}"
+                commandLine "bash", "-c", "source ${rootProject.projectDir}/set_env.sh && ./gradlew install -PparentDepsDir=${depsDir}"
             }
         }
     }
@@ -65,7 +48,7 @@ task install(dependsOn: installDeps) {
     doLast {
         println "Installing current tool..."
         exec {
-            commandLine "bash", "src/install.sh"
+            commandLine "bash", "-c", "source ${rootProject.projectDir}/set_env.sh && bash src/install.sh"
         }
     }
 }
@@ -75,7 +58,7 @@ task uninstallCurrent {
     doLast {
         println "Uninstalling current tool..."
         exec {
-            commandLine "bash", "src/uninstall.sh"
+            commandLine "bash", "-c", "source ${rootProject.projectDir}/set_env.sh && bash src/uninstall.sh"
         }
     }
 }
@@ -89,7 +72,7 @@ task uninstallDeps {
                 println "Uninstalling dependency via Gradle: ${dep.repo}"
                 exec {
                     workingDir depPath
-                    commandLine "./gradlew", "uninstall"
+                    commandLine "bash", "-c", "source ${rootProject.projectDir}/set_env.sh && ./gradlew uninstall"
                 }
             } else {
                 println "Dependency ${dep.repo} not found in ${depPath}, skipping..."
@@ -141,5 +124,4 @@ task testSandbox {
         }
     }
 }
-
 
