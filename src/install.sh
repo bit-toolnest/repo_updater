@@ -1,120 +1,113 @@
 #!/bin/bash
 set -e
 
-echo "=== Central Jenkinsfile Updater ==="
+echo "=== Central Repo Sync Tool ==="
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SCRIPT_DIR}/sync-config.json"
 
 ORG="bit-toolnest"
-
 TEMPLATE_ORG="bit-template"
 TEMPLATE_REPO="tool-template"
 
-SOURCE_FILE="Jenkinsfile"
-TARGET_FILE="Jenkinsfile"
-
-COMMIT_MESSAGE="Central update: Jenkinsfile synchronized"
-
-EXCLUDE_REPOS=(
-    "repo_updater"
-)
-
-echo "[INFO] Checking environment..."
+ADMIN_USER="${ADMIN_USER:-}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 if [[ -z "$ADMIN_USER" || -z "$GITHUB_TOKEN" ]]; then
-    echo "[INFO] GitHub credentials not available."
-    echo "[INFO] Running in sandbox/local test mode."
-    echo "[INFO] Skipping repository update."
-
-    exit 0
-fi
-
-WORKDIR=$(mktemp -d)
-
-cleanup() {
-    rm -rf "$WORKDIR"
-}
-
-trap cleanup EXIT
-
-echo "[INFO] Cloning template repository..."
-
-git clone \
-"https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TEMPLATE_ORG}/${TEMPLATE_REPO}.git" \
-"${WORKDIR}/template"
-
-SOURCE_PATH="${WORKDIR}/template/${SOURCE_FILE}"
-
-if [[ ! -f "$SOURCE_PATH" ]]; then
-    echo "[ERROR] Jenkinsfile not found in template repository"
+    echo "[ERROR] Missing GitHub credentials."
     exit 1
 fi
 
-echo "[INFO] Fetching repositories from ${ORG}..."
+WORKDIR=$(mktemp -d)
+trap "rm -rf $WORKDIR" EXIT
 
-REPOS=$(
-curl -s \
--H "Authorization: token ${GITHUB_TOKEN}" \
-"https://api.github.com/orgs/${ORG}/repos?per_page=100" |
-grep '"name"' |
-cut -d '"' -f4
-)
+# --- Load config ---
+ORG=$(jq -r '.organization' "$CONFIG_FILE")
+TEMPLATE_ORG=$(jq -r '.template_org' "$CONFIG_FILE")
+TEMPLATE_REPO=$(jq -r '.template_repo' "$CONFIG_FILE")
 
-for repo in $REPOS
-do
+UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG_FILE")
+PR_TARGET=$(jq -r '.pr_target' "$CONFIG_FILE")
+EXCLUDE_REPOS=($(jq -r '.exclude[]' "$CONFIG_FILE"))
 
-    skip=false
+# --- Clone template repo ---
+echo "[INFO] Cloning template repo..."
+git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TEMPLATE_ORG}/${TEMPLATE_REPO}.git" "$WORKDIR/template"
 
-    for excluded in "${EXCLUDE_REPOS[@]}"
-    do
-        if [[ "$repo" == "$excluded" ]]
-        then
-            skip=true
-            break
-        fi
-    done
+# --- Fetch all repos with pagination ---
+page=1
+REPOS=()
+while :; do
+  response=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+    "https://api.github.com/orgs/${ORG}/repos?per_page=100&page=${page}")
+  names=$(echo "$response" | grep '"name"' | cut -d '"' -f4)
+  [[ -z "$names" ]] && break
+  REPOS+=($names)
+  ((page++))
+done
 
-    if [[ "$skip" == true ]]
-    then
-        echo "[INFO] Skipping ${repo}"
+# --- Process each repo ---
+for repo in "${REPOS[@]}"; do
+    if [[ " ${EXCLUDE_REPOS[*]} " =~ " ${repo} " ]]; then
+        echo "[INFO] Skipping $repo"
         continue
     fi
 
-    echo ""
-    echo "[INFO] Updating ${repo}"
+    echo "[INFO] Updating $repo..."
+    TEMP_REPO="$WORKDIR/$repo"
+    git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${ORG}/${repo}.git" "$TEMP_REPO"
+    cd "$TEMP_REPO"
 
-    TEMP_REPO="${WORKDIR}/${repo}"
+    # --- Sync sources ---
+    for row in $(jq -c '.sources[]' "$CONFIG_FILE"); do
+        SRC=$(echo "$row" | jq -r '.src')
+        DEST=$(echo "$row" | jq -r '.dest')
+        TYPE=$(echo "$row" | jq -r '.type')
 
-    git clone \
-    "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${ORG}/${repo}.git" \
-    "${TEMP_REPO}"
+        SOURCE_PATH="$WORKDIR/template/$SRC"
+        TARGET_PATH="$TEMP_REPO/$DEST"
 
-    cp "${SOURCE_PATH}" \
-       "${TEMP_REPO}/${TARGET_FILE}"
+        if [[ "$TYPE" == "file" ]]; then
+            if ! diff -q "$SOURCE_PATH" "$TARGET_PATH" >/dev/null 2>&1; then
+                cp "$SOURCE_PATH" "$TARGET_PATH"
+                git add "$TARGET_PATH"
+            fi
+        elif [[ "$TYPE" == "folder" ]]; then
+            if ! diff -qr "$SOURCE_PATH" "$TARGET_PATH" >/dev/null 2>&1; then
+                rsync -a "$SOURCE_PATH/" "$TARGET_PATH/"
+                git add "$TARGET_PATH"
+            fi
+        fi
+    done
 
-    cd "${TEMP_REPO}"
-
-    git config user.name "jenkins"
-    git config user.email "jenkins@bit-toolnest.local"
-
-    git add "${TARGET_FILE}"
-
-    if git diff --cached --quiet
-    then
-        echo "[INFO] No changes detected for ${repo}"
+    # --- Commit if changes ---
+    if git diff --cached --quiet; then
+        echo "[INFO] No changes for $repo"
         cd "$WORKDIR"
         continue
     fi
 
-    git commit -m "${COMMIT_MESSAGE}" || true
+    changed=$(git diff --cached --name-only | tr '\n' ' ')
+    git config user.name "sync-bot"
+    git config user.email "sync-bot@${ORG}.local"
+    git commit -m "Central update: synchronized [$changed] from template"
 
-    git push
+    if [[ "$UPDATE_MODE" == "PUSH" ]]; then
+        git push origin main
+        echo "[INFO] Changes pushed to main"
+    else
+        branch="sync-update-$(date +%s)"
+        git checkout -b "$branch"
+        git push origin "$branch"
 
-    echo "[INFO] ${repo} updated"
+        curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" \
+          -d "{\"title\":\"Sync update\",\"head\":\"$branch\",\"base\":\"$PR_TARGET\"}" \
+          "https://api.github.com/repos/${ORG}/${repo}/pulls" >/dev/null
+
+        echo "[INFO] PR created for $repo"
+    fi
 
     cd "$WORKDIR"
-
 done
 
-echo ""
-echo "✅ Update process completed"
+echo "✅ Sync process completed"
