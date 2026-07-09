@@ -40,9 +40,9 @@ REPOS=()
 while :; do
   response=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
     "https://api.github.com/orgs/${ORG}/repos?per_page=100&page=${page}")
-  names=$(echo "$response" | grep '"name"' | cut -d '"' -f4)
-  [[ -z "$names" ]] && break
-  REPOS+=($names)
+  mapfile -t names < <(echo "$response" | jq -r '.[].name')
+  [[ ${#names[@]} -eq 0 ]] && break
+  REPOS+=("${names[@]}")
   ((page++))
 done
 
@@ -90,6 +90,12 @@ for repo in "${REPOS[@]}"; do
     changed=$(git diff --cached --name-only | tr '\n' ' ')
     git config user.name "sync-bot"
     git config user.email "sync-bot@${ORG}.local"
+    echo "===================================="
+    echo "PWD: $(pwd)"
+    echo "Repo variable: $repo"
+    git remote -v
+    git branch
+    echo "===================================="
     git commit -m "Central update: synchronized [$changed] from template"
 
     if [[ "$UPDATE_MODE" == "PUSH" ]]; then
@@ -98,6 +104,9 @@ for repo in "${REPOS[@]}"; do
     else
         branch="sync-update-$(date +%s)"
         git checkout -b "$branch"
+        echo "Pushing from:"
+        pwd
+        git remote get-url origin
         git push origin "$branch"
 
         curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" \
