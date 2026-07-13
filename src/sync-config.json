@@ -1,7 +1,7 @@
 {
-  "organization": "bit-toolnest",
-  "template_org": "bit-template",
-  "template_repo": "tool-template",
+  "target_org": "bit-toolnest",
+  "source_org": "bit-template",
+  "source_repo": "tool-template",
   "sources": [
     {
       "src": "Jenkinsfile",
