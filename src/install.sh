@@ -6,9 +6,15 @@ echo "=== Central Repo Sync Tool ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/sync-config.json"
 
-ORG="bit-toolnest"
-TEMPLATE_ORG="bit-template"
-TEMPLATE_REPO="tool-template"
+# --- Config validation ---
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "[ERROR] Missing config file: $CONFIG_FILE"
+    exit 1
+fi
+
+TARGET_ORG=$(jq -r '.target_org' "$CONFIG_FILE")
+SOURCE_ORG=$(jq -r '.source_org' "$CONFIG_FILE")
+SOURCE_REPO=$(jq -r '.source_repo' "$CONFIG_FILE")
 
 ADMIN_USER="${ADMIN_USER:-}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
@@ -21,25 +27,20 @@ fi
 WORKDIR=$(mktemp -d)
 trap "rm -rf $WORKDIR" EXIT
 
-# --- Load config ---
-ORG=$(jq -r '.organization' "$CONFIG_FILE")
-TEMPLATE_ORG=$(jq -r '.template_org' "$CONFIG_FILE")
-TEMPLATE_REPO=$(jq -r '.template_repo' "$CONFIG_FILE")
-
 UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG_FILE")
 PR_TARGET=$(jq -r '.pr_target' "$CONFIG_FILE")
 EXCLUDE_REPOS=($(jq -r '.exclude[]' "$CONFIG_FILE"))
 
 # --- Clone template repo ---
 echo "[INFO] Cloning template repo..."
-git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TEMPLATE_ORG}/${TEMPLATE_REPO}.git" "$WORKDIR/template"
+git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${SOURCE_ORG}/${SOURCE_REPO}.git" "$WORKDIR/template"
 
 # --- Fetch all repos with pagination ---
 page=1
 REPOS=()
 while :; do
   response=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-    "https://api.github.com/orgs/${ORG}/repos?per_page=100&page=${page}")
+    "https://api.github.com/orgs/${TARGET_ORG}/repos?per_page=100&page=${page}")
   mapfile -t names < <(echo "$response" | jq -r '.[].name')
   [[ ${#names[@]} -eq 0 ]] && break
   REPOS+=("${names[@]}")
@@ -55,7 +56,7 @@ for repo in "${REPOS[@]}"; do
 
     echo "[INFO] Updating $repo..."
     TEMP_REPO="$WORKDIR/$repo"
-    git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${ORG}/${repo}.git" "$TEMP_REPO"
+    git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TARGET_ORG}/${repo}.git" "$TEMP_REPO"
     cd "$TEMP_REPO"
 
     # --- Sync sources ---
@@ -89,29 +90,26 @@ for repo in "${REPOS[@]}"; do
 
     changed=$(git diff --cached --name-only | tr '\n' ' ')
     git config user.name "sync-bot"
-    git config user.email "sync-bot@${ORG}.local"
-    echo "===================================="
-    echo "PWD: $(pwd)"
-    echo "Repo variable: $repo"
-    git remote -v
-    git branch
-    echo "===================================="
-    git commit -m "Central update: synchronized [$changed] from template"
+    git config user.email "sync-bot@${TARGET_ORG}.local"
+
+    tpl_commit=$(git -C "$WORKDIR/template" rev-parse --short HEAD)
+    git commit -m "Sync from template@$tpl_commit: updated [$changed]"
+
+    # --- Detect default branch dynamically ---
+    default_branch=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
+      "https://api.github.com/repos/${TARGET_ORG}/${repo}" | jq -r '.default_branch')
 
     if [[ "$UPDATE_MODE" == "PUSH" ]]; then
-        git push origin main
-        echo "[INFO] Changes pushed to main"
+        git push origin "$default_branch"
+        echo "[INFO] Changes pushed to $default_branch"
     else
         branch="sync-update-$(date +%s)"
         git checkout -b "$branch"
-        echo "Pushing from:"
-        pwd
-        git remote get-url origin
         git push origin "$branch"
 
         curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" \
-          -d "{\"title\":\"Sync update\",\"head\":\"$branch\",\"base\":\"$PR_TARGET\"}" \
-          "https://api.github.com/repos/${ORG}/${repo}/pulls" >/dev/null
+          -d "{\"title\":\"Sync update\",\"head\":\"$branch\",\"base\":\"$default_branch\"}" \
+          "https://api.github.com/repos/${TARGET_ORG}/${repo}/pulls" >/dev/null
 
         echo "[INFO] PR created for $repo"
     fi
