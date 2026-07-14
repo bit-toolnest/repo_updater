@@ -33,7 +33,8 @@ EXCLUDE_REPOS=($(jq -r '.exclude[]' "$CONFIG_FILE"))
 
 # --- Clone template repo ---
 echo "[INFO] Cloning template repo..."
-git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${SOURCE_ORG}/${SOURCE_REPO}.git" "$WORKDIR/template"
+# Clone the target repo (not the template org!)
+git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TARGET_ORG}/${repo}.git" "$TEMP_REPO"
 
 # --- Fetch all repos with pagination ---
 page=1
@@ -95,10 +96,10 @@ for repo in "${REPOS[@]}"; do
     tpl_commit=$(git -C "$WORKDIR/template" rev-parse --short HEAD)
     git commit -m "Sync from template@$tpl_commit: updated [$changed]"
 
-    # --- Detect default branch dynamically ---
+    # Detect default branch dynamically from target repo
     default_branch=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
       "https://api.github.com/repos/${TARGET_ORG}/${repo}" | jq -r '.default_branch')
-
+    
     if [[ "$UPDATE_MODE" == "PUSH" ]]; then
         git push origin "$default_branch"
         echo "[INFO] Changes pushed to $default_branch"
@@ -106,11 +107,11 @@ for repo in "${REPOS[@]}"; do
         branch="sync-update-$(date +%s)"
         git checkout -b "$branch"
         git push origin "$branch"
-
+    
         curl -s -X POST -H "Authorization: token ${GITHUB_TOKEN}" \
           -d "{\"title\":\"Sync update\",\"head\":\"$branch\",\"base\":\"$default_branch\"}" \
           "https://api.github.com/repos/${TARGET_ORG}/${repo}/pulls" >/dev/null
-
+    
         echo "[INFO] PR created for $repo"
     fi
 
