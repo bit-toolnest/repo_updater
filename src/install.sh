@@ -33,8 +33,7 @@ EXCLUDE_REPOS=($(jq -r '.exclude[]' "$CONFIG_FILE"))
 
 # --- Clone template repo ---
 echo "[INFO] Cloning template repo..."
-# Clone the target repo (not the template org!)
-git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${TARGET_ORG}/${repo}.git" "$TEMP_REPO"
+git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${SOURCE_ORG}/${SOURCE_REPO}.git" "$WORKDIR/template"
 
 # --- Fetch all repos with pagination ---
 page=1
@@ -50,6 +49,8 @@ done
 
 # --- Process each repo ---
 for repo in "${REPOS[@]}"; do
+    [[ -z "$repo" ]] && continue
+
     if [[ " ${EXCLUDE_REPOS[*]} " =~ " ${repo} " ]]; then
         echo "[INFO] Skipping $repo"
         continue
