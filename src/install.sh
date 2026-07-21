@@ -74,6 +74,7 @@ for repo in "${REPOS[@]}"; do
         DEST=$(echo "$row" | jq -r '.dest')
         TYPE=$(echo "$row" | jq -r '.type')
 
+        [[ -z "$SRC" ]] && { echo "[WARN] Empty src path in config for $repo"; continue; }
         SOURCE_PATH="$WORKDIR/template/$SRC"
         TARGET_PATH="$TEMP_REPO/$DEST"
 
