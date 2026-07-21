@@ -31,6 +31,13 @@ UPDATE_MODE=$(jq -r '.update_mode' "$CONFIG_FILE")
 PR_TARGET=$(jq -r '.pr_target' "$CONFIG_FILE")
 EXCLUDE_REPOS=($(jq -r '.exclude[]' "$CONFIG_FILE"))
 
+# --- Dry-run flag ---
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+    DRY_RUN=true
+    echo "[INFO] Running in dry-run mode (no commits/pushes/PRs)"
+fi
+
 # --- Clone template repo ---
 echo "[INFO] Cloning template repo..."
 git clone "https://${ADMIN_USER}:${GITHUB_TOKEN}@github.com/${SOURCE_ORG}/${SOURCE_REPO}.git" "$WORKDIR/template"
@@ -72,13 +79,13 @@ for repo in "${REPOS[@]}"; do
 
         if [[ "$TYPE" == "file" ]]; then
             if ! diff -q "$SOURCE_PATH" "$TARGET_PATH" >/dev/null 2>&1; then
-                cp "$SOURCE_PATH" "$TARGET_PATH"
-                git add "$TARGET_PATH"
+                echo "[DRY-RUN] Would copy file $SRC -> $DEST"
+                $DRY_RUN || cp "$SOURCE_PATH" "$TARGET_PATH" && git add "$TARGET_PATH"
             fi
         elif [[ "$TYPE" == "folder" ]]; then
             if ! diff -qr "$SOURCE_PATH" "$TARGET_PATH" >/dev/null 2>&1; then
-                rsync -a "$SOURCE_PATH/" "$TARGET_PATH/"
-                git add "$TARGET_PATH"
+                echo "[DRY-RUN] Would sync folder $SRC -> $DEST"
+                $DRY_RUN || rsync -a "$SOURCE_PATH/" "$TARGET_PATH/" && git add "$TARGET_PATH"
             fi
         fi
     done
@@ -91,10 +98,16 @@ for repo in "${REPOS[@]}"; do
     fi
 
     changed=$(git diff --cached --name-only | tr '\n' ' ')
+    tpl_commit=$(git -C "$WORKDIR/template" rev-parse --short HEAD)
+
+    if $DRY_RUN; then
+        echo "[DRY-RUN] Would commit: Sync from template@$tpl_commit: updated [$changed]"
+        cd "$WORKDIR"
+        continue
+    fi
+
     git config user.name "sync-bot"
     git config user.email "sync-bot@${TARGET_ORG}.local"
-
-    tpl_commit=$(git -C "$WORKDIR/template" rev-parse --short HEAD)
     git commit -m "Sync from template@$tpl_commit: updated [$changed]"
 
     # Detect default branch dynamically from target repo
